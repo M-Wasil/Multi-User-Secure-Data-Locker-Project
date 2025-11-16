@@ -9,25 +9,33 @@ INCLUDE Irvine32.inc
 separator DB "|",0
 noteSeparator DB "|",0
 
+debugModifyIndex DB "DEBUG: Modifying note at index ",0
+debugNewContent  DB "DEBUG: New content: ",0
+debugDestAddr    DB "DEBUG: Destination address: ",0
+debugVerify      DB "DEBUG: After modification: ",0
+
 debugBuildStart DB "DEBUG: Building filename for note ",0
 debugBuildEnd DB "DEBUG: Built filename = ",0
-; Debug messages
-debugViewStart DB "DEBUG: ViewAllNotes started",0
-debugNoteCount DB "DEBUG: noteCount = ",0
-debugCurrentNote DB "DEBUG: Processing note ",0
-debugFilename DB "DEBUG: Filename = ",0
-debugFileHandle DB "DEBUG: File handle = ",0
-debugBytesRead DB "DEBUG: Bytes read = ",0
-debugNoteContent DB "DEBUG: Note content = ",0
-debugNoteSkipped DB "DEBUG: Note skipped (file not found or empty)",0
+
+notesArray     BYTE 10 DUP(512 DUP(0))  ; 10 notes, each 512 chars
+noteCount      DWORD 0
+maxNotes       EQU 10
+
+; Messages for new features
+msgEnterNoteIndex DB "Enter note number to view: ",0
+msgModifyNote     DB "Enter note number to modify: ",0
+msgEnterNewNote   DB "Enter new note content: ",0
+msgNoteModified   DB "Note modified successfully!",0
+msgChangePIN      DB "Enter new PIN: ",0
+msgPINChanged     DB "PIN changed successfully!",0
+msgTooManyNotes   DB "Maximum notes reached! Cannot add more.",0
 
 msgNoteFailed DB "Failed to add note!",0
 newline DB 0Dh, 0Ah, 0
 fixedNotesPrefix DB "notes_",0
 msgNoteMissing DB " [FILE NOT FOUND]",0
-msgTooManyNotes DB "Maximum notes reached! Cannot add more.",0
-notesArray     BYTE 10 DUP(512 DUP(0))  ; 10 notes, each 512 chars
-noteCount      DWORD 0
+
+
 maxNotes       EQU 10
 
 ; User login info
@@ -65,15 +73,13 @@ msgNoNotes        DB "No notes found.",0
 msgNotesHeader    DB "=== Your Notes ===",0
 msgNoteNumber     DB "Note ",0
 msgColon          DB ": ",0
-msgEnterNoteIndex DB "Enter note number to view: ",0
+
 msgInvalidIndex   DB "Invalid note number!",0
 msgDeleteNote     DB "Enter note number to delete: ",0
 msgNoteDeleted    DB "Note deleted successfully!",0
-msgModifyNote     DB "Enter note number to modify: ",0
-msgEnterNewNote   DB "Enter new note content: ",0
-msgNoteModified   DB "Note modified successfully!",0
-msgChangePIN      DB "Enter new PIN: ",0
-msgPINChanged     DB "PIN changed successfully!",0
+msgConfirmPIN DB "Confirm new PIN: ",0
+inputBuf2     BYTE 32 DUP(?)
+
 msgNotImplemented DB "Feature not implemented yet!",0
 
 ; Menu messages
@@ -718,6 +724,241 @@ AddExtension:
     ret
 BuildNotesFileNameWithCounter ENDP
 
+ViewNoteByIndex PROC
+    push ebp
+    mov ebp, esp
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    
+    ; Get note index from user
+    mov edx, OFFSET msgEnterNoteIndex
+    call WriteString
+    call ReadInt
+    dec eax  ; Convert to 0-based index
+    
+    ; Validate index
+    cmp eax, 0
+    jl InvalidIndex
+    cmp eax, noteCount
+    jge InvalidIndex
+    
+    ; Calculate address of the note
+    mov esi, eax
+    imul esi, 512
+    add esi, OFFSET notesArray
+    
+    ; Display the note
+    mov edx, OFFSET msgNoteNumber
+    call WriteString
+    mov eax, eax  ; We already have the 0-based index, but show 1-based to user
+    inc eax
+    call WriteDec
+    mov edx, OFFSET msgColon
+    call WriteString
+    mov edx, esi
+    call WriteString
+    call Crlf
+    jmp ViewByIndexDone
+
+InvalidIndex:
+    mov edx, OFFSET msgInvalidIndex
+    call WriteString
+    call Crlf
+
+ViewByIndexDone:
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    pop ebp
+    ret
+ViewNoteByIndex ENDP
+
+ModifyNote PROC
+    push ebp
+    mov ebp, esp
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    
+    ; Get note index to modify
+    mov edx, OFFSET msgModifyNote
+    call WriteString
+    call ReadInt
+    dec eax  ; Convert to 0-based index
+    
+    ; Validate index
+    cmp eax, 0
+    jl InvalidIndexModify
+    cmp eax, noteCount
+    jge InvalidIndexModify
+    
+    ; Store the index in EBX
+    mov ebx, eax
+    
+    ; Get new note content
+    mov edx, OFFSET msgEnterNewNote
+    call WriteString
+    mov edx, OFFSET noteBuf
+    mov ecx, SIZEOF noteBuf
+    call ReadString
+    
+    cmp eax, 0
+    je ModifyDone  ; If empty, do nothing
+    
+    ; Store the length
+    mov ecx, eax
+    
+    ; Calculate address in notesArray: notesArray + (index * 512)
+    mov edi, ebx
+    imul edi, 512
+    add edi, OFFSET notesArray
+    
+    ; Clear the old note (fill with zeros)
+    push ecx
+    push edi
+    mov ecx, 512
+    mov al, 0
+    rep stosb
+    pop edi
+    pop ecx
+    
+    ; Copy the new note from noteBuf to notesArray position
+    mov esi, OFFSET noteBuf
+    ; EDI already points to the correct position in notesArray
+    
+    ; Copy the bytes
+    cld
+    rep movsb
+    
+    mov edx, OFFSET msgNoteModified
+    call WriteString
+    call Crlf
+    jmp ModifyDone
+
+InvalidIndexModify:
+    mov edx, OFFSET msgInvalidIndex
+    call WriteString
+    call Crlf
+
+ModifyDone:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    pop ebp
+    ret
+ModifyNote ENDP
+
+ChangePIN PROC
+    push ebp
+    mov ebp, esp
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    
+    ; Get new PIN
+    mov edx, OFFSET msgChangePIN
+    call WriteString
+    mov edx, OFFSET inputBuf
+    mov ecx, SIZEOF inputBuf
+    call ReadString
+    
+    ; Copy to recPin and encrypt
+    mov esi, OFFSET inputBuf
+    mov edi, OFFSET recPin
+    call CopyInputToRecord
+    mov recPinLen, ecx
+    
+    ; Encrypt the new PIN
+    mov esi, OFFSET recPin
+    mov ecx, recPinLen
+    call Encrypt
+    
+    ; Update the users.dat file with new PIN
+    mov edx, OFFSET fileName
+    call CreateOutputFile
+    mov hFile, eax
+    
+    cmp eax, INVALID_HANDLE_VALUE
+    je ChangePINFailed
+    
+    ; Write username (20 bytes) - use currentUser which was set during login
+    mov eax, hFile
+    mov edx, OFFSET currentUser
+    mov ecx, 20
+    call WriteToFile
+    cmp eax, 0
+    je WriteFailed
+    
+    ; Write new PIN (20 bytes)
+    mov eax, hFile
+    mov edx, OFFSET recPin
+    mov ecx, 20
+    call WriteToFile
+    cmp eax, 0
+    je WriteFailed
+    
+    call CloseFile
+    
+    mov edx, OFFSET msgPINChanged
+    call WriteString
+    call Crlf
+    jmp ChangePINDone
+
+WriteFailed:
+    mov edx, OFFSET msgNoteFailed
+    call WriteString
+    call Crlf
+    call CloseFile
+    jmp ChangePINDone
+
+ChangePINFailed:
+    mov edx, OFFSET msgNoteFailed
+    call WriteString
+    call Crlf
+
+ChangePINDone:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    pop ebp
+    ret
+ChangePIN ENDP
+
+StrCompare PROC
+    ; Compare strings at ESI and EDI
+    ; Returns ZF=1 if equal, ZF=0 if different
+    push eax
+CompareLoop:
+    mov al, [esi]
+    cmp al, [edi]
+    jne CompareDone
+    cmp al, 0
+    je CompareDone
+    inc esi
+    inc edi
+    jmp CompareLoop
+CompareDone:
+    pop eax
+    ret
+StrCompare ENDP
+
 ; Check if file exists - returns 1 in EAX if exists, 0 if not
 CheckFileExists PROC
     push edx
@@ -750,27 +991,7 @@ CheckFileExists ENDP
 ;-----------------------------------------------------
 ; Placeholder functions for unimplemented features
 ;-----------------------------------------------------
-ViewNoteByIndex PROC
-    mov edx, OFFSET msgNotImplemented
-    call WriteString
-    call Crlf
-    ret
-ViewNoteByIndex ENDP
 
-
-ModifyNote PROC
-    mov edx, OFFSET msgNotImplemented
-    call WriteString
-    call Crlf
-    ret
-ModifyNote ENDP
-
-ChangePIN PROC
-    mov edx, OFFSET msgNotImplemented
-    call WriteString
-    call Crlf
-    ret
-ChangePIN ENDP
 
 ;-----------------------------------------------------
 ; User Management (same as before)
@@ -1053,6 +1274,17 @@ MenuLoop:
     je DoLogin
     cmp al, 3
     je ExitProg
+    jmp MenuLoop
+DoViewNoteByIndex:
+    call ViewNoteByIndex
+    jmp MenuLoop
+
+DoModifyNote:
+    call ModifyNote
+    jmp MenuLoop
+
+DoChangePIN:
+    call ChangePIN
     jmp MenuLoop
 
 DoRegister:
