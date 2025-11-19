@@ -8,6 +8,7 @@ INCLUDE Irvine32.inc
 ; Debug messages
 separator DB "|",0
 noteSeparator DB "|",0
+msgChangePINFailed DB "Failed to change PIN!",0
 
 debugModifyIndex DB "DEBUG: Modifying note at index ",0
 debugNewContent  DB "DEBUG: New content: ",0
@@ -257,7 +258,13 @@ AddNoteSimple ENDP
 ; Build Notes Filename - FIXED VERSION
 ;-----------------------------------------------------
 BuildNotesFileName PROC
-    ; Simple, safe filename builder
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    
     mov edi, OFFSET notesFileName
     
     ; Write "notes_"
@@ -276,14 +283,14 @@ BuildNotesFileName PROC
     
     ; Append username
     mov esi, OFFSET currentUser
-CopyUsername:
+AppendUsername:
     mov al, [esi]
     cmp al, 0
     je AddExtension
     mov [edi], al
     inc esi
     inc edi
-    jmp CopyUsername
+    jmp AppendUsername
     
 AddExtension:
     ; Add ".dat"
@@ -297,6 +304,12 @@ AddExtension:
     inc edi
     mov byte ptr [edi], 0
     
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
     ret
 BuildNotesFileName ENDP
 
@@ -341,6 +354,7 @@ AddNote PROC
     
     ; Increment note count
     inc noteCount
+    
     
     mov edx, OFFSET msgNoteAdded
     call WriteString
@@ -541,6 +555,7 @@ ShiftLoop:
 ShiftDone:
     ; Decrement note count
     dec noteCount
+    
     
     mov edx, OFFSET msgNoteDeleted
     call WriteString
@@ -882,7 +897,7 @@ ChangePIN PROC
     call CopyInputToRecord
     mov recPinLen, ecx
     
-    ; Encrypt the new PIN
+    ; Encrypt the new PIN for storage
     mov esi, OFFSET recPin
     mov ecx, recPinLen
     call Encrypt
@@ -895,9 +910,15 @@ ChangePIN PROC
     cmp eax, INVALID_HANDLE_VALUE
     je ChangePINFailed
     
-    ; Write username (20 bytes) - use currentUser which was set during login
+    ; Copy currentUser to recUser for file storage
+    mov esi, OFFSET currentUser
+    mov edi, OFFSET recUser
+    mov ecx, 20
+    rep movsb
+    
+    ; Write username (20 bytes)
     mov eax, hFile
-    mov edx, OFFSET currentUser
+    mov edx, OFFSET recUser
     mov ecx, 20
     call WriteToFile
     cmp eax, 0
@@ -919,14 +940,14 @@ ChangePIN PROC
     jmp ChangePINDone
 
 WriteFailed:
-    mov edx, OFFSET msgNoteFailed
+    mov edx, OFFSET msgChangePINFailed
     call WriteString
     call Crlf
     call CloseFile
     jmp ChangePINDone
 
 ChangePINFailed:
-    mov edx, OFFSET msgNoteFailed
+    mov edx, OFFSET msgChangePINFailed
     call WriteString
     call Crlf
 
@@ -940,6 +961,141 @@ ChangePINDone:
     pop ebp
     ret
 ChangePIN ENDP
+
+; Save all notes to file
+SaveNotesToFile PROC
+    push ebp
+    mov ebp, esp
+    push eax
+    push ebx
+    push ecx
+    push edx
+    
+    ; Build notes filename
+    call BuildNotesFileName
+    
+    ; Create file (overwrites existing)
+    mov edx, OFFSET notesFileName
+    call CreateOutputFile
+    mov hFile, eax
+    
+    cmp eax, INVALID_HANDLE_VALUE
+    je SaveNotesExit
+    
+    ; Write each note separated by newlines
+    mov ecx, 0  ; note index
+    
+WriteNotesLoop:
+    cmp ecx, noteCount
+    jge SaveNotesDone
+    
+    ; Calculate note address
+    mov esi, ecx
+    imul esi, 512
+    add esi, OFFSET notesArray
+    
+    ; Write note content
+    mov eax, hFile
+    mov edx, esi
+    call WriteToFile
+    
+    ; Write newline separator
+    mov eax, hFile
+    mov edx, OFFSET newline
+    mov ecx, 2
+    call WriteToFile
+    
+    inc ecx
+    jmp WriteNotesLoop
+    
+SaveNotesDone:
+    call CloseFile
+    
+SaveNotesExit:
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    pop ebp
+    ret
+SaveNotesToFile ENDP
+
+; Load notes from file
+LoadNotesFromFile PROC
+    push ebp
+    mov ebp, esp
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    
+    ; Build notes filename
+    call BuildNotesFileName
+    
+    ; Open file
+    mov edx, OFFSET notesFileName
+    call OpenInputFile
+    mov hFile, eax
+    
+    cmp eax, INVALID_HANDLE_VALUE
+    je LoadNotesFailed
+    
+    ; Reset note count
+    mov noteCount, 0
+    
+    ; Read file line by line
+ReadNotesLoop:
+    ; Read into temp buffer
+    mov eax, hFile
+    mov edx, OFFSET tempBuf
+    mov ecx, SIZEOF tempBuf
+    call ReadFromFile
+    
+    cmp eax, 0
+    je LoadNotesDone
+    
+    ; Check if we read anything meaningful (not just whitespace)
+    mov esi, OFFSET tempBuf
+    call StrLengthh
+    cmp eax, 0
+    je ReadNotesLoop
+    
+    ; Copy to notesArray
+    mov edi, noteCount
+    imul edi, 512
+    add edi, OFFSET notesArray
+    
+    mov esi, OFFSET tempBuf
+    mov ecx, eax
+    rep movsb
+    
+    ; Increment note count
+    inc noteCount
+    cmp noteCount, 10  ; Max notes
+    jge LoadNotesDone
+    
+    jmp ReadNotesLoop
+    
+LoadNotesDone:
+    call CloseFile
+    jmp LoadNotesExit
+
+LoadNotesFailed:
+    ; If file doesn't exist, start with empty notes
+    mov noteCount, 0
+    
+LoadNotesExit:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    pop ebp
+    ret
+LoadNotesFromFile ENDP
 
 StrCompare PROC
     ; Compare strings at ESI and EDI
@@ -1140,6 +1296,7 @@ LoginUser PROC
 
     ; SUCCESS
     mov loginSuccessFlag, 1
+    call LoadNotesFromFile
     
     ; Store current username
     mov esi, OFFSET recUser
@@ -1161,6 +1318,22 @@ LoginDone:
     popad
     ret
 LoginUser ENDP
+
+StrLengthh PROC
+    ; Input: ESI = string address
+    ; Output: EAX = string length
+    push esi
+    mov eax, 0
+CountLoop:
+    cmp byte ptr [esi], 0
+    je DoneCount
+    inc eax
+    inc esi
+    jmp CountLoop
+DoneCount:
+    pop esi
+    ret
+StrLengthh ENDP
 
 ;-----------------------------------------------------
 ; Main Menu After Login
@@ -1239,6 +1412,7 @@ DoChangePIN:
     jmp MainMenuLoop
 
 MainMenuDone:
+call SaveNotesToFile
     ret
 MainMenu ENDP
 
