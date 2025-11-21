@@ -6,17 +6,7 @@ INCLUDE Irvine32.inc
 
 .data
 ; Debug messages
-separator DB "|",0
-noteSeparator DB "|",0
 msgChangePINFailed DB "Failed to change PIN!",0
-
-debugModifyIndex DB "DEBUG: Modifying note at index ",0
-debugNewContent  DB "DEBUG: New content: ",0
-debugDestAddr    DB "DEBUG: Destination address: ",0
-debugVerify      DB "DEBUG: After modification: ",0
-
-debugBuildStart DB "DEBUG: Building filename for note ",0
-debugBuildEnd DB "DEBUG: Built filename = ",0
 
 notesArray     BYTE 10 DUP(512 DUP(0))  ; 10 notes, each 512 chars
 noteCount      DWORD 0
@@ -36,9 +26,6 @@ newline DB 0Dh, 0Ah, 0
 fixedNotesPrefix DB "notes_",0
 msgNoteMissing DB " [FILE NOT FOUND]",0
 
-
-maxNotes       EQU 10
-
 ; User login info
 currentUser       BYTE 32 DUP(0)        
 recUser           BYTE 20 DUP(0)        
@@ -46,19 +33,17 @@ recPin            BYTE 20 DUP(0)
 recUserLen        DWORD 0               
 recPinLen         DWORD 0               
 inputBuf          BYTE 512 DUP(?)       
-fileName          BYTE "users.dat",0    
+fileName          BYTE 64 DUP(0)  
 fileUser          BYTE 20 DUP(0)        
 filePin           BYTE 20 DUP(0)        
 hFile             DWORD ?
-bytesRead         DWORD ?
-bytesWritten      DWORD ?
 loginSuccessFlag  DWORD 0
+fixedUsersPrefix  DB "user_",0
+
 
 ; Notes management
 notesFileName     BYTE 64 DUP(0)
-noteBuf           BYTE 512 DUP(?)       
-compressedBuf     BYTE 1024 DUP(?)      
-encryptedBuf      BYTE 1024 DUP(?)      
+noteBuf           BYTE 512 DUP(?)           
 tempBuf           BYTE 1024 DUP(?)      
 currentNoteIndex  DWORD 0
 caesarShift       BYTE 3                
@@ -74,14 +59,10 @@ msgNoNotes        DB "No notes found.",0
 msgNotesHeader    DB "=== Your Notes ===",0
 msgNoteNumber     DB "Note ",0
 msgColon          DB ": ",0
-
 msgInvalidIndex   DB "Invalid note number!",0
 msgDeleteNote     DB "Enter note number to delete: ",0
 msgNoteDeleted    DB "Note deleted successfully!",0
-msgConfirmPIN DB "Confirm new PIN: ",0
-inputBuf2     BYTE 32 DUP(?)
 
-msgNotImplemented DB "Feature not implemented yet!",0
 
 ; Menu messages
 menuMsg1 db "1. Register",0
@@ -190,70 +171,6 @@ DeDone:
     ret
 Decrypt ENDP
 
-AddNoteSimple PROC
-    pushad
-    
-    ; Get note input
-    mov edx, OFFSET msgAddNote
-    call WriteString
-    mov edx, OFFSET noteBuf
-    mov ecx, SIZEOF noteBuf
-    call ReadString
-    
-    cmp eax, 0
-    je AddNoteDone
-    
-    ; Build filename
-    call BuildNotesFileName
-    
-    ; SIMPLIFIED: Save raw note without compression/encryption
-    mov edx, OFFSET notesFileName
-    call OpenInputFile
-    mov hFile, eax
-    
-    cmp eax, INVALID_HANDLE_VALUE
-    jne AppendToFile
-    
-    mov edx, OFFSET notesFileName
-    call CreateOutputFile
-    mov hFile, eax
-    jmp WriteNote
-    
-AppendToFile:
-    call CloseFile
-    mov edx, OFFSET notesFileName
-    call OpenInputFile
-    mov hFile, eax
-    mov eax, hFile
-    mov edx, 0
-    mov ecx, 2
-    call SetFilePointer
-    
-WriteNote:
-    ; Write note length
-    mov word ptr [tempBuf], ax
-    mov eax, hFile
-    mov edx, OFFSET tempBuf
-    mov ecx, 2
-    call WriteToFile
-    
-    ; Write note data
-    mov eax, hFile
-    mov edx, OFFSET noteBuf
-    mov ecx, eax  ; length from ReadString is still in EAX
-    call WriteToFile
-    
-    call CloseFile
-    
-    mov edx, OFFSET msgNoteAdded
-    call WriteString
-    call Crlf
-    
-AddNoteDone:
-    popad
-    ret
-AddNoteSimple ENDP
-
 ;-----------------------------------------------------
 ; Build Notes Filename - FIXED VERSION
 ;-----------------------------------------------------
@@ -312,6 +229,72 @@ AddExtension:
     pop eax
     ret
 BuildNotesFileName ENDP
+
+;-----------------------------------------------------
+; BuildUserFileName
+;   fileName = ".\user_<currentUser>.dat"
+;   Uses currentUser (20 bytes, null-terminated)
+;-----------------------------------------------------
+BuildUserFileName PROC
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    mov edi, OFFSET fileName
+
+    ; Optional: current directory prefix ".\"
+    mov byte ptr [edi], '.'
+    inc edi
+    mov byte ptr [edi], '\'
+    inc edi
+
+    ; Write "user_"
+    mov byte ptr [edi], 'u'
+    inc edi
+    mov byte ptr [edi], 's'
+    inc edi
+    mov byte ptr [edi], 'e'
+    inc edi
+    mov byte ptr [edi], 'r'
+    inc edi
+    mov byte ptr [edi], '_'
+    inc edi
+
+    ; Append currentUser (up to first 0)
+    mov esi, OFFSET currentUser
+BU_AppendUser:
+    mov al, [esi]
+    cmp al, 0
+    je BU_AddExt
+    mov [edi], al
+    inc esi
+    inc edi
+    jmp BU_AppendUser
+
+BU_AddExt:
+    ; Add ".dat"
+    mov byte ptr [edi], '.'
+    inc edi
+    mov byte ptr [edi], 'd'
+    inc edi
+    mov byte ptr [edi], 'a'
+    inc edi
+    mov byte ptr [edi], 't'
+    inc edi
+    mov byte ptr [edi], 0
+
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+BuildUserFileName ENDP
+
 
 ;-----------------------------------------------------
 ; Add Note - FIXED VERSION
@@ -377,67 +360,6 @@ AddNoteDone:
     ret
 AddNote ENDP
 
-BuildSingleNotesFileName PROC
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    
-    mov edi, OFFSET notesFileName
-    
-    ; Use current directory
-    mov byte ptr [edi], '.'
-    inc edi
-    mov byte ptr [edi], '\'
-    inc edi
-    
-    ; Write "notes_"
-    mov byte ptr [edi], 'n'
-    inc edi
-    mov byte ptr [edi], 'o'
-    inc edi
-    mov byte ptr [edi], 't'
-    inc edi
-    mov byte ptr [edi], 'e'
-    inc edi
-    mov byte ptr [edi], 's'
-    inc edi
-    mov byte ptr [edi], '_'
-    inc edi
-    
-    ; Append username
-    mov esi, OFFSET currentUser
-AppendUsername:
-    mov al, [esi]
-    cmp al, 0
-    je AddExtension
-    mov [edi], al
-    inc esi
-    inc edi
-    jmp AppendUsername
-    
-AddExtension:
-    ; Add ".dat"
-    mov byte ptr [edi], '.'
-    inc edi
-    mov byte ptr [edi], 'd'
-    inc edi
-    mov byte ptr [edi], 'a'
-    inc edi
-    mov byte ptr [edi], 't'
-    inc edi
-    mov byte ptr [edi], 0
-    
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    ret
-BuildSingleNotesFileName ENDP
 ViewAllNotes PROC
     push ebp
     mov ebp, esp
@@ -577,167 +499,6 @@ DeleteDone:
     pop ebp
     ret
 DeleteNote ENDP
-
-BuildNotesFileNameWithCounterForDisplay PROC
-    ; Same as BuildNotesFileNameWithCounter but uses ECX instead of noteCount
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    
-    mov edi, OFFSET notesFileName
-    
-    ; Write "notes_"
-    mov esi, OFFSET fixedNotesPrefix
-    mov ecx, 6
-    rep movsb
-    
-    ; Append username
-    mov esi, OFFSET currentUser
-AppendUsername:
-    mov al, [esi]
-    cmp al, 0
-    je AddCounter
-    mov [edi], al
-    inc esi
-    inc edi
-    jmp AppendUsername
-    
-AddCounter:
-    mov byte ptr [edi], '_'
-    inc edi
-    
-    ; Convert ECX to string (note number)
-    mov eax, ecx  ; Use the counter from ECX
-    mov ebx, 10
-    xor ecx, ecx
-    
-ConvertLoop:
-    xor edx, edx
-    div ebx
-    push dx
-    inc ecx
-    test eax, eax
-    jnz ConvertLoop
-    
-PopLoop:
-    pop ax
-    add al, '0'
-    mov [edi], al
-    inc edi
-    loop PopLoop
-    
-AddExtension:
-    mov byte ptr [edi], '.'
-    inc edi
-    mov byte ptr [edi], 'd'
-    inc edi
-    mov byte ptr [edi], 'a'
-    inc edi
-    mov byte ptr [edi], 't'
-    inc edi
-    mov byte ptr [edi], 0
-    
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    ret
-BuildNotesFileNameWithCounterForDisplay ENDP
-
-BuildNotesFileNameWithCounter PROC
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-
-    mov edi, OFFSET notesFileName
-    
-    ; Use absolute path to current directory
-    mov byte ptr [edi], '.'
-    inc edi
-    mov byte ptr [edi], '\'
-    inc edi
-    
-    ; Write "notes_"
-    mov byte ptr [edi], 'n'
-    inc edi
-    mov byte ptr [edi], 'o'
-    inc edi
-    mov byte ptr [edi], 't'
-    inc edi
-    mov byte ptr [edi], 'e'
-    inc edi
-    mov byte ptr [edi], 's'
-    inc edi
-    mov byte ptr [edi], '_'
-    inc edi
-    
-    ; Append username
-    mov esi, OFFSET currentUser
-AppendUsername:
-    mov al, [esi]
-    cmp al, 0
-    je AddCounter
-    mov [edi], al
-    inc esi
-    inc edi
-    jmp AppendUsername
-    
-AddCounter:
-    ; Add underscore
-    mov byte ptr [edi], '_'
-    inc edi
-    
-    ; Convert ECX to string (note number)
-    mov eax, ecx
-    mov ebx, 10
-    push ecx
-    xor ecx, ecx
-    
-ConvertLoop:
-    xor edx, edx
-    div ebx
-    push dx
-    inc ecx
-    test eax, eax
-    jnz ConvertLoop
-    
-PopLoop:
-    pop ax
-    add al, '0'
-    mov [edi], al
-    inc edi
-    loop PopLoop
-    
-    pop ecx
-    
-AddExtension:
-    ; Add ".dat"
-    mov byte ptr [edi], '.'
-    inc edi
-    mov byte ptr [edi], 'd'
-    inc edi
-    mov byte ptr [edi], 'a'
-    inc edi
-    mov byte ptr [edi], 't'
-    inc edi
-    mov byte ptr [edi], 0
-    
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    ret
-BuildNotesFileNameWithCounter ENDP
 
 ViewNoteByIndex PROC
     push ebp
@@ -903,9 +664,12 @@ ChangePIN PROC
     call Encrypt
     
     ; Update the users.dat file with new PIN
+    ; Update this user's credential file: .\user_<currentUser>.dat
+    call BuildUserFileName
     mov edx, OFFSET fileName
     call CreateOutputFile
     mov hFile, eax
+
     
     cmp eax, INVALID_HANDLE_VALUE
     je ChangePINFailed
@@ -997,6 +761,7 @@ WriteNotesLoop:
     ; Write note content
     mov eax, hFile
     mov edx, esi
+    mov ecx,512
     call WriteToFile
     
     ; Write newline separator
@@ -1009,6 +774,7 @@ WriteNotesLoop:
     jmp WriteNotesLoop
     
 SaveNotesDone:
+    mov eax,hfile
     call CloseFile
     
 SaveNotesExit:
@@ -1058,7 +824,7 @@ ReadNotesLoop:
     
     ; Check if we read anything meaningful (not just whitespace)
     mov esi, OFFSET tempBuf
-    call StrLengthh
+    call StrLength
     cmp eax, 0
     je ReadNotesLoop
     
@@ -1096,59 +862,6 @@ LoadNotesExit:
     pop ebp
     ret
 LoadNotesFromFile ENDP
-
-StrCompare PROC
-    ; Compare strings at ESI and EDI
-    ; Returns ZF=1 if equal, ZF=0 if different
-    push eax
-CompareLoop:
-    mov al, [esi]
-    cmp al, [edi]
-    jne CompareDone
-    cmp al, 0
-    je CompareDone
-    inc esi
-    inc edi
-    jmp CompareLoop
-CompareDone:
-    pop eax
-    ret
-StrCompare ENDP
-
-; Check if file exists - returns 1 in EAX if exists, 0 if not
-CheckFileExists PROC
-    push edx
-    push eax
-    
-    mov edx, OFFSET notesFileName
-    call OpenInputFile
-    cmp eax, INVALID_HANDLE_VALUE
-    je FileNotExists
-    
-    ; File exists - close it and return 1
-    call CloseFile
-    mov eax, 1
-    jmp CheckDone
-    
-FileNotExists:
-    mov eax, 0
-    
-CheckDone:
-    pop eax
-    pop edx
-    ret
-CheckFileExists ENDP
-
-;-----------------------------------------------------
-; View All Notes - FIXED VERSION
-;-----------------------------------------------------
-
-
-;-----------------------------------------------------
-; Placeholder functions for unimplemented features
-;-----------------------------------------------------
-
-
 ;-----------------------------------------------------
 ; User Management (same as before)
 ;-----------------------------------------------------
@@ -1167,6 +880,15 @@ RegisterUser PROC
     call CopyInputToRecord
     mov recUserLen, ecx
 
+   ; Make this new user the currentUser (for filename building)
+    mov esi, OFFSET recUser
+    mov edi, OFFSET currentUser
+    mov ecx, 20
+    cld
+    rep movsb
+    mov byte ptr [currentUser+20], 0    ; null-terminate
+
+
     ; Get PIN
     mov edx, OFFSET msgEnterPIN
     call WriteString
@@ -1184,9 +906,13 @@ RegisterUser PROC
     mov ecx, recPinLen
     call Encrypt
 
-    ; Save to file
+       ;-------------------------------------------------
+    ; Save this user in its own file: .\user_<name>.dat
+    ;-------------------------------------------------
+    call BuildUserFileName          ; builds fileName based on currentUser
+
     mov edx, OFFSET fileName
-    call CreateOutputFile
+    call CreateOutputFile           ; overwrites if user re-registers
     mov hFile, eax
     cmp eax, INVALID_HANDLE_VALUE
     je RegFailed
@@ -1199,7 +925,7 @@ RegisterUser PROC
     cmp eax, 0
     je RegFailed
     
-    ; Write PIN (20 bytes)
+    ; Write encrypted PIN (20 bytes)
     mov eax, hFile
     mov edx, OFFSET recPin
     mov ecx, 20
@@ -1210,6 +936,7 @@ RegisterUser PROC
     ; Close file
     mov eax, hFile
     call CloseFile
+
     
     mov edx, OFFSET msgRegSuccess
     call WriteString
@@ -1229,8 +956,41 @@ RegisterUser ENDP
 LoginUser PROC
     pushad
     
+    ; ---------------------------------------------------------
+    ; 1. CRITICAL FIX: Zero out ALL buffers before use
+    ; This prevents "Ghost Data" from previous sessions
+    ; ---------------------------------------------------------
+    cld                     ; Clear Direction Flag (Move Forward)
+
+    ; Clear fileUser buffer
+    mov edi, OFFSET fileUser
+    mov ecx, 20
+    mov al, 0
+    rep stosb
+
+    ; Clear filePin buffer
+    mov edi, OFFSET filePin
+    mov ecx, 20
+    mov al, 0
+    rep stosb
+
+    ; Clear recUser buffer
+    mov edi, OFFSET recUser
+    mov ecx, 20
+    mov al, 0
+    rep stosb
+
+    ; Clear recPin buffer
+    mov edi, OFFSET recPin
+    mov ecx, 20
+    mov al, 0
+    rep stosb
+
     mov loginSuccessFlag, 0
 
+    ; ---------------------------------------------------------
+    ; 2. Get Inputs
+    ; ---------------------------------------------------------
     ; Get username
     mov edx, OFFSET msgEnterUsername
     call WriteString
@@ -1241,6 +1001,15 @@ LoginUser PROC
     mov edi, OFFSET recUser
     call CopyInputToRecord
     mov recUserLen, ecx
+
+    ; Set currentUser from entered username
+    mov esi, OFFSET recUser
+    mov edi, OFFSET currentUser
+    mov ecx, 20
+    cld
+    rep movsb
+    mov byte ptr [currentUser+20], 0
+
 
     ; Get PIN
     mov edx, OFFSET msgEnterPIN
@@ -1253,88 +1022,86 @@ LoginUser PROC
     call CopyInputToRecord
     mov recPinLen, ecx
 
-    ; Encrypt the entered PIN for comparison
+    ; Encrypt entered PIN
     mov esi, OFFSET recPin
     mov ecx, recPinLen
     call Encrypt
 
-    ; Open file to validate
+      ; ---------------------------------------------------------
+    ; 3. File Operations (open this user's credential file)
+    ; ---------------------------------------------------------
+    call BuildUserFileName           ; builds fileName from currentUser
     mov edx, OFFSET fileName
     call OpenInputFile
+
     mov hFile, eax
     cmp eax, INVALID_HANDLE_VALUE
-    je LoginDone
+    je LoginFailExit
 
     ; Read stored username
     mov eax, hFile
     mov edx, OFFSET fileUser
     mov ecx, 20
     call ReadFromFile
-    mov bytesRead, eax
+    ; Check if read failed
     cmp eax, 0
-    je LoginDone
-    
+    je CloseAndFail
+
     ; Read stored PIN
     mov eax, hFile
     mov edx, OFFSET filePin
     mov ecx, 20
     call ReadFromFile
 
+    ; CLOSE THE FILE IMMEDIATELY
+    mov eax, hFile
+    call CloseFile
+
+    ; ---------------------------------------------------------
+    ; 4. Comparisons (Safe now because buffers were zeroed)
+    ; ---------------------------------------------------------
+    
     ; Compare username
     mov esi, OFFSET recUser
     mov edi, OFFSET fileUser
     mov ecx, 20
+    cld             ; Ensure forward comparison
     repe cmpsb
-    jnz LoginDone
+    jnz LoginFailExit
 
     ; Compare PIN
     mov esi, OFFSET recPin
     mov edi, OFFSET filePin
     mov ecx, 20
+    cld             ; Ensure forward comparison
     repe cmpsb
-    jnz LoginDone
+    jnz LoginFailExit
 
-    ; SUCCESS
+    ; --- SUCCESS ---
     mov loginSuccessFlag, 1
-    call LoadNotesFromFile
-    
-    ; Store current username
+
+    ; Update currentUser safely
     mov esi, OFFSET recUser
     mov edi, OFFSET currentUser
-    mov ecx, recUserLen
-    cmp ecx, 0
-    je LoginDone
-CopyUsername:
-    mov al, [esi]
-    mov [edi], al
-    inc esi
-    inc edi
-    loop CopyUsername
-    mov byte ptr [edi], 0
+    mov ecx, 20
+    cld
+    rep movsb
+    
+    mov byte ptr [currentUser+20], 0 ; Null terminate
+    call LoadNotesFromFile
+    jmp LoginExit
 
-LoginDone:
+CloseAndFail:
     mov eax, hFile
     call CloseFile
+
+LoginFailExit:
+    mov loginSuccessFlag, 0
+
+LoginExit:
     popad
     ret
 LoginUser ENDP
-
-StrLengthh PROC
-    ; Input: ESI = string address
-    ; Output: EAX = string length
-    push esi
-    mov eax, 0
-CountLoop:
-    cmp byte ptr [esi], 0
-    je DoneCount
-    inc eax
-    inc esi
-    jmp CountLoop
-DoneCount:
-    pop esi
-    ret
-StrLengthh ENDP
-
 ;-----------------------------------------------------
 ; Main Menu After Login
 ;-----------------------------------------------------
@@ -1370,6 +1137,7 @@ MainMenuLoop:
     call Crlf
     call Crlf
     
+
     sub al, '0'
     cmp al, 1
     je DoAddNote
@@ -1449,17 +1217,6 @@ MenuLoop:
     cmp al, 3
     je ExitProg
     jmp MenuLoop
-DoViewNoteByIndex:
-    call ViewNoteByIndex
-    jmp MenuLoop
-
-DoModifyNote:
-    call ModifyNote
-    jmp MenuLoop
-
-DoChangePIN:
-    call ChangePIN
-    jmp MenuLoop
 
 DoRegister:
     call RegisterUser
@@ -1472,9 +1229,6 @@ DoLogin:
     mov edx, OFFSET msgFail
     call WriteString
     call Crlf
-    jmp MenuLoop
-DoDeleteNote:
-    call DeleteNote
     jmp MenuLoop
 
 LoginSuccess:
