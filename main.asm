@@ -5,8 +5,6 @@
 INCLUDE Irvine32.inc
 
 .data
-; Debug messages
-msgChangePINFailed DB "Failed to change PIN!",0
 
 notesArray     BYTE 10 DUP(512 DUP(0))  ; 10 notes, each 512 chars
 noteCount      DWORD 0
@@ -20,7 +18,7 @@ msgNoteModified   DB "Note modified successfully!",0
 msgChangePIN      DB "Enter new PIN: ",0
 msgPINChanged     DB "PIN changed successfully!",0
 msgTooManyNotes   DB "Maximum notes reached! Cannot add more.",0
-
+msgChangePINFailed DB "Failed to change PIN!",0
 msgNoteFailed DB "Failed to add note!",0
 newline DB 0Dh, 0Ah, 0
 fixedNotesPrefix DB "notes_",0
@@ -82,9 +80,14 @@ msgBye db "Exiting program.",0
 
 .code
 ;-----------------------------------------------------
-; Utility Procedures
+; Utility Procedures (Procedures for common tasks)
 ;-----------------------------------------------------
+
 CopyInputToRecord PROC
+; ===============================================================
+    ; Scans input for newline/null, then pads the rest of the 
+    ; 20-byte buffer with zeros to ensure clean file comparisons.
+; ===============================================================
     push esi
     push edi
     push edx
@@ -132,6 +135,9 @@ CIP_return:
 CopyInputToRecord ENDP
 
 Encrypt PROC
+; ===============================================================
+    ; Shifts every byte in the buffer up by 3 (Caesar Cipher +3).
+; ===============================================================
     push esi
     push ecx
     push eax
@@ -152,6 +158,9 @@ EnDone:
 Encrypt ENDP
 
 Decrypt PROC
+; ===============================================================
+    ; Shifts every byte in the buffer down by 3 (Caesar Cipher -3).
+; ===============================================================
     push esi
     push ecx
     push eax
@@ -171,10 +180,10 @@ DeDone:
     ret
 Decrypt ENDP
 
-;-----------------------------------------------------
-; Build Notes Filename - FIXED VERSION
-;-----------------------------------------------------
 BuildNotesFileName PROC
+; ===============================================================
+    ; Constructs string "notes_[username].dat" dynamically.
+; ===============================================================
     push eax
     push ebx
     push ecx
@@ -230,12 +239,10 @@ AddExtension:
     ret
 BuildNotesFileName ENDP
 
-;-----------------------------------------------------
-; BuildUserFileName
-;   fileName = ".\user_<currentUser>.dat"
-;   Uses currentUser (20 bytes, null-terminated)
-;-----------------------------------------------------
 BuildUserFileName PROC
+; ===============================================================
+    ; Constructs string ".\user_[username].dat" dynamically.
+; ===============================================================
     push eax
     push ebx
     push ecx
@@ -244,8 +251,6 @@ BuildUserFileName PROC
     push edi
 
     mov edi, OFFSET fileName
-
-    ; Optional: current directory prefix ".\"
     mov byte ptr [edi], '.'
     inc edi
     mov byte ptr [edi], '\'
@@ -297,48 +302,53 @@ BuildUserFileName ENDP
 
 
 ;-----------------------------------------------------
-; Add Note - FIXED VERSION
+; Section 2: Notes Functions (Procedures for notes manipulation)
 ;-----------------------------------------------------
-; Temporary solution: Store multiple notes in same file separated by "|"
-; Alternative: Store all notes in one file separated by a special character
 AddNote PROC
+; ===============================================================
+    ; Calculates memory offset based on Note Count and stores input.
+    ; Formula: Address = BaseArray + (NoteIndex * 512)
+; ===============================================================
     push ebp
     mov ebp, esp
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    
-    ; Check if we have space for more notes
+    pushad          ; Use pushad to save all registers easily
+
+    ; Check capacity
     mov eax, noteCount
     cmp eax, maxNotes
     jge TooManyNotes
-    
-    ; Get note input
+
+    ; Get input
     mov edx, OFFSET msgAddNote
     call WriteString
     mov edx, OFFSET noteBuf
     mov ecx, SIZEOF noteBuf
     call ReadString
+    ; EAX now holds string length
     
-    cmp eax, 0
-    je AddNoteDone
-    
+    ; Calculate destination address in notesArray
+    mov edi, noteCount
+    imul edi, 512
+    add edi, OFFSET notesArray
+
+    ; --- FIX START: Clean the slot with Zeros first ---
+    push eax        ; Save string length
+    push edi        ; Save destination
+    mov ecx, 512    ; Clear entire 512 byte slot
+    mov al, 0
+    rep stosb
+    pop edi         ; Restore destination
+    pop eax         ; Restore string length
+    ; --- FIX END ---
+
     ; Copy note to notesArray
     mov esi, OFFSET noteBuf
-    mov edi, noteCount
-    imul edi, 512  ; Each note is 512 bytes
-    add edi, OFFSET notesArray
-    mov ecx, eax
-    inc ecx  ; Include null terminator
+    mov ecx, eax    ; Length of string
+    inc ecx         ; Include null terminator
     rep movsb
-    
-    ; Increment note count
+
     inc noteCount
-    
-    
+
     mov edx, OFFSET msgNoteAdded
     call WriteString
     call Crlf
@@ -350,17 +360,17 @@ TooManyNotes:
     call Crlf
 
 AddNoteDone:
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
+    popad
     pop ebp
     ret
 AddNote ENDP
 
 ViewAllNotes PROC
+; ===============================================================
+    ;Iterate through the NotesArray using a counter.
+    ;Print each note with its index.
+; ===============================================================
+
     push ebp
     mov ebp, esp
     push eax
@@ -425,6 +435,10 @@ ViewNotesDone:
 ViewAllNotes ENDP
 
 DeleteNote PROC
+; ===============================================================
+    ; Removes note at Index X, then moves Note X+1 to X, X+2 to X+1...
+    ; This prevents empty "holes" in the note list.
+; ===============================================================
     push ebp
     mov ebp, esp
     push eax
@@ -501,6 +515,11 @@ DeleteDone:
 DeleteNote ENDP
 
 ViewNoteByIndex PROC
+; ===============================================================
+    ;Ask the user for a specific note's index
+    ;Print the requested index
+; ===============================================================
+
     push ebp
     mov ebp, esp
     push eax
@@ -555,6 +574,10 @@ ViewByIndexDone:
 ViewNoteByIndex ENDP
 
 ModifyNote PROC
+; ===============================================================
+    ;Overwrite the notes by calculating its address
+    ;Copy new user input into that slot
+; ===============================================================
     push ebp
     mov ebp, esp
     push eax
@@ -636,6 +659,11 @@ ModifyDone:
 ModifyNote ENDP
 
 ChangePIN PROC
+; ===============================================================
+    ;Updates User's PIN by encrypting it
+    ;Overwrite the Previous Pin
+; ===============================================================
+
     push ebp
     mov ebp, esp
     push eax
@@ -663,7 +691,7 @@ ChangePIN PROC
     mov ecx, recPinLen
     call Encrypt
     
-    ; Update the users.dat file with new PIN
+ 
     ; Update this user's credential file: .\user_<currentUser>.dat
     call BuildUserFileName
     mov edx, OFFSET fileName
@@ -726,146 +754,117 @@ ChangePINDone:
     ret
 ChangePIN ENDP
 
-; Save all notes to file
+
+
+
+
+;-----------------------------------------------------
+; Section 3: File Loading Procedures (Procedures for loading data into file)
+;-----------------------------------------------------
 SaveNotesToFile PROC
+; ===============================================================
+    ; Loops through RAM array and writes valid notes to file.
+    ; Adds a newline between notes for readability.
+; ===============================================================
     push ebp
-    mov ebp, esp
-    push eax
-    push ebx
-    push ecx
-    push edx
-    
+    mov  ebp, esp
+    pushad
+
     ; Build notes filename
     call BuildNotesFileName
-    
-    ; Create file (overwrites existing)
-    mov edx, OFFSET notesFileName
+
+    ; Create (overwrite) file
+    mov  edx, OFFSET notesFileName
     call CreateOutputFile
-    mov hFile, eax
-    
-    cmp eax, INVALID_HANDLE_VALUE
-    je SaveNotesExit
-    
-    ; Write each note separated by newlines
-    mov ecx, 0  ; note index
-    
-WriteNotesLoop:
-    cmp ecx, noteCount
-    jge SaveNotesDone
-    
-    ; Calculate note address
-    mov esi, ecx
-    imul esi, 512
-    add esi, OFFSET notesArray
-    
-    ; Write note content
-    mov eax, hFile
-    mov edx, esi
-    mov ecx,512
-    call WriteToFile
-    
-    ; Write newline separator
-    mov eax, hFile
-    mov edx, OFFSET newline
-    mov ecx, 2
-    call WriteToFile
-    
-    inc ecx
-    jmp WriteNotesLoop
-    
-SaveNotesDone:
-    mov eax,hfile
+    mov  hFile, eax
+    cmp  eax, INVALID_HANDLE_VALUE
+    je   SaveNotesExit
+
+    ; If no notes, just close
+    cmp  noteCount, 0
+    jle  CloseAndExit
+
+    ; Write noteCount * 512 bytes from notesArray
+    mov  eax, hFile
+    mov  edx, OFFSET notesArray
+    mov  ecx, noteCount
+    mov  ebx, 512
+    imul ecx, ebx           ; ecx = noteCount * 512
+    call WriteToFile        ; writes the raw bytes
+
+CloseAndExit:
+    mov  eax, hFile
     call CloseFile
-    
+
 SaveNotesExit:
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    pop ebp
+    popad
+    pop  ebp
     ret
 SaveNotesToFile ENDP
 
-; Load notes from file
+
+
 LoadNotesFromFile PROC
+; ===============================================================
+    ; Read the data file into a temp buffer
+    ; Copies the content of buffer into Notes Array
+; ===============================================================
     push ebp
-    mov ebp, esp
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    
+    mov  ebp, esp
+    pushad
+
     ; Build notes filename
     call BuildNotesFileName
-    
-    ; Open file
-    mov edx, OFFSET notesFileName
-    call OpenInputFile
-    mov hFile, eax
-    
-    cmp eax, INVALID_HANDLE_VALUE
-    je LoadNotesFailed
-    
-    ; Reset note count
-    mov noteCount, 0
-    
-    ; Read file line by line
-ReadNotesLoop:
-    ; Read into temp buffer
-    mov eax, hFile
-    mov edx, OFFSET tempBuf
-    mov ecx, SIZEOF tempBuf
-    call ReadFromFile
-    
-    cmp eax, 0
-    je LoadNotesDone
-    
-    ; Check if we read anything meaningful (not just whitespace)
-    mov esi, OFFSET tempBuf
-    call StrLength
-    cmp eax, 0
-    je ReadNotesLoop
-    
-    ; Copy to notesArray
-    mov edi, noteCount
-    imul edi, 512
-    add edi, OFFSET notesArray
-    
-    mov esi, OFFSET tempBuf
-    mov ecx, eax
-    rep movsb
-    
-    ; Increment note count
-    inc noteCount
-    cmp noteCount, 10  ; Max notes
-    jge LoadNotesDone
-    
-    jmp ReadNotesLoop
-    
-LoadNotesDone:
-    call CloseFile
-    jmp LoadNotesExit
 
-LoadNotesFailed:
-    ; If file doesn't exist, start with empty notes
-    mov noteCount, 0
+    ; Open file
+    mov  edx, OFFSET notesFileName
+    call OpenInputFile
+    mov  hFile, eax
+    cmp  eax, INVALID_HANDLE_VALUE
+    je   NoNotesFile
+
+    ; Read bytes
+    mov  eax, hFile
+    mov  edx, OFFSET notesArray
+    mov  ecx, SIZEOF notesArray       
+    call ReadFromFile                ; EAX = bytesRead
     
+    ; --- FIX START: Save bytesRead before closing file ---
+    push eax                         ; Save bytesRead to stack
+    
+    mov  eax, hFile
+    call CloseFile                   ; EAX is now clobbered (returns success flag)
+
+    pop eax                          ; Restore bytesRead from stack
+    ; --- FIX END ---
+
+    ; Compute noteCount = bytesRead / 512
+    mov  ebx, 512
+    xor  edx, edx
+    div  ebx                         ; Now dividing the actual byte count
+    mov  noteCount, eax
+    jmp  LoadNotesExit
+
+NoNotesFile:
+    mov  noteCount, 0
+
 LoadNotesExit:
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    pop ebp
+    popad
+    pop  ebp
     ret
 LoadNotesFromFile ENDP
+
+
+
 ;-----------------------------------------------------
-; User Management (same as before)
+; Section 4:User Management
 ;-----------------------------------------------------
 RegisterUser PROC
+; ===============================================================
+    ; Ask the user for name and PIN
+    ; Format and Encrypt them
+    ;Store them into .dat file
+; ===============================================================
     pushad
     
     ; Get username
@@ -906,9 +905,6 @@ RegisterUser PROC
     mov ecx, recPinLen
     call Encrypt
 
-       ;-------------------------------------------------
-    ; Save this user in its own file: .\user_<name>.dat
-    ;-------------------------------------------------
     call BuildUserFileName          ; builds fileName based on currentUser
 
     mov edx, OFFSET fileName
@@ -954,13 +950,14 @@ RegDone:
 RegisterUser ENDP
 
 LoginUser PROC
+; ===============================================================
+    ; 1. Clears all buffers (Security).
+    ; 2. Reads input (User/PIN).
+    ; 3. Opens specific user file.
+    ; 4. Compares Input vs File Content.
+; ===============================================================
     pushad
-    
-    ; ---------------------------------------------------------
-    ; 1. CRITICAL FIX: Zero out ALL buffers before use
-    ; This prevents "Ghost Data" from previous sessions
-    ; ---------------------------------------------------------
-    cld                     ; Clear Direction Flag (Move Forward)
+    cld                 
 
     ; Clear fileUser buffer
     mov edi, OFFSET fileUser
@@ -989,7 +986,7 @@ LoginUser PROC
     mov loginSuccessFlag, 0
 
     ; ---------------------------------------------------------
-    ; 2. Get Inputs
+    ;  Get Inputs
     ; ---------------------------------------------------------
     ; Get username
     mov edx, OFFSET msgEnterUsername
@@ -1027,10 +1024,10 @@ LoginUser PROC
     mov ecx, recPinLen
     call Encrypt
 
-      ; ---------------------------------------------------------
-    ; 3. File Operations (open this user's credential file)
     ; ---------------------------------------------------------
-    call BuildUserFileName           ; builds fileName from currentUser
+    ;. File Operations (open this user's credential file)
+    ; ---------------------------------------------------------
+    call BuildUserFileName         
     mov edx, OFFSET fileName
     call OpenInputFile
 
@@ -1102,8 +1099,10 @@ LoginExit:
     popad
     ret
 LoginUser ENDP
+
+
 ;-----------------------------------------------------
-; Main Menu After Login
+; Section 5: Main Menu
 ;-----------------------------------------------------
 MainMenu PROC
 MainMenuLoop:
